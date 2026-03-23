@@ -188,6 +188,8 @@ save_checkpoint_bundle('target_rate_channels', dataDir, ...
     'HorgSet', HorgSet, ...
     'Hset', Hset);
 
+%%
+
 rateOpts = struct();
 rateOpts.Nt = Nt;
 rateOpts.Nsband = Nsband;
@@ -198,8 +200,13 @@ rateOpts.return_cells = false;
 rateOpts.verbose = true;
 rateOpts.sample_indices = 1:size(HorgSet,4);
 
-Ptot = 1.0;
-N0   = 1e-2;
+N0 = 1e-2;
+SNR0_dB = 20;
+Nlayer = 1;
+
+Ptot = compute_ptot_for_target_snr0(HorgSet, Nlayer, N0, SNR0_dB);
+
+fprintf('Computed Ptot for SNR0 = %.1f dB: %.6g\n', SNR0_dB, Ptot);
 
 %% ---------------------------------------------------------
 % 5) Pretrain DDA backbone once, and get DDA mismatch once
@@ -233,6 +240,7 @@ Yhat_dda_before = predictImCsiNetAutoencoder( ...
     encoderNet0, decoderNet0, XB_test, preOpts.UseGPU, preOpts.UseBinarization);
 save_checkpoint_var('Yhat_dda_before', Yhat_dda_before, dataDir);
 
+%%
 res_dda_before = batch_eval_rate_from_ddanet_outputs( ...
     HorgSet, Hset, Yhat_dda_before, Ptot, N0, rateOpts);
 
@@ -324,7 +332,7 @@ for i = 1:nCases
     c_dda_after = avg_cosine_similarity_matrix(Yhat_dda_after, XB_test, Nt, Nsband);
 
     % ----- PSVD adapted
-    [Vs_tgt, sigma_tgt, V_tgt, info_tgt] = psvd_codebook(XB_fieldN.', compressRate, rho0, Tpsvd);
+    [Vs_tgt, sigma_tgt, V_tgt, info_tgt] = psvd_codebook_real(XB_fieldN.', compressRate, rho0, Tpsvd);
 
     save_checkpoint_bundle(sprintf('psvd_target_Nfield_%d', Nfield), dataDir, ...
         'Vs_tgt', Vs_tgt, ...
@@ -454,4 +462,233 @@ for i = 1:nCases
         fieldList(i), R_dda_after(i), R_psvd_after(i), ...
         cos_dda_after(i), cos_psvd_after(i));
 end
+
+
+%% ---------------------------------------------------------
+% 8) Additional native time-domain PSVD comparison
+% ---------------------------------------------------------
+fprintf('\n[8/8] Running native time-domain PSVD comparison...\n');
+
+Ntap_td = 32;          % truncated taps in time domain
+rho0_td = rho0;        % reuse sparsity
+Tpsvd_td = Tpsvd;
+
+% Two options:
+%   (A) same compression ratio as implicit benchmark
+compressRate_td = compressRate;
+%   (B) or same latent dimension as implicit benchmark (L ~= 13)
+% Nfeat_td = Nt * size(HorgSet,2) * Ntap_td;
+% compressRate_td = 13 / Nfeat_td;
+
+% ---------------------------------------------------------
+% 8.1) Build source/target time-domain CSI
+% ---------------------------------------------------------
+Ht_A = freq_to_truncated_time_csi(Hf_A, Ntap_td);   % [Ns, Nt, Nr, Ntap]
+Ht_B = freq_to_truncated_time_csi(Hf_B, Ntap_td);
+
+save_checkpoint_var('Ht_A', Ht_A, dataDir);
+save_checkpoint_var('Ht_B', Ht_B, dataDir);
+
+XA_td = td_csi_to_feature_matrix(Ht_A);   % [Ns, Nfeat]
+XB_td = td_csi_to_feature_matrix(Ht_B);   % [Ns, Nfeat]
+
+save_checkpoint_var('XA_td', XA_td, dataDir);
+save_checkpoint_var('XB_td', XB_td, dataDir);
+
+% Use the SAME split indices as the implicit experiment
+XA_td_train = XA_td(idxA_train, :);
+XB_td_fieldPool = XB_td(idxB_fieldPool, :);
+XB_td_test = XB_td(idxB_test, :);
+
+save_checkpoint_bundle('td_dataset_split', dataDir, ...
+    'XA_td_train', XA_td_train, ...
+    'XB_td_fieldPool', XB_td_fieldPool, ...
+    'XB_td_test', XB_td_test);
+
+% ---------------------------------------------------------
+% 8.2) Source PSVD codebook in time domain (mismatch baseline)
+% ---------------------------------------------------------
+[Vs_td_src, sigma_td_src, V_td_src, info_td_src] = ...
+    psvd_codebook(XA_td_train, compressRate_td, rho0_td, Tpsvd_td);
+
+save_checkpoint_bundle('psvd_td_source', dataDir, ...
+    'Vs_td_src', Vs_td_src, ...
+    'sigma_td_src', sigma_td_src, ...
+    'V_td_src', V_td_src, ...
+    'info_td_src', info_td_src);
+
+% Reconstruct target test time-domain CSI using source codebook (mismatch)
+Xhat_td_before = psvd_reconstruct_row_features(XB_td_test, Vs_td_src, true);   % [Ntest, Nfeat]
+Ht_hat_before = feature_matrix_to_td_csi(Xhat_td_before, Nt, size(HorgSet,2), Ntap_td);
+Hf_hat_before = truncated_time_to_freq_csi(Ht_hat_before, Nsub);
+
+save_checkpoint_bundle('psvd_td_mismatch_recon', dataDir, ...
+    'Xhat_td_before', Xhat_td_before, ...
+    'Ht_hat_before', Ht_hat_before, ...
+    'Hf_hat_before', Hf_hat_before);
+
+% True target test channels
+Horg_td_test = permute(Hf_B(idxB_test,:,:,:), [1 2 3 4]);  % [Ntest, Nt, Nr, Nsub]
+Horg_td_test = permute(Horg_td_test, [2 3 4 1]);           % [Nt, Nr, Nsub, Ntest] for rate wrapper consistency if needed
+
+% Imperfect CSIR for time-domain PSVD evaluation
+if usePerfectCSIR
+    H_td_test = Horg_td_test;
+else
+    H_td_test = add_freq_csi_noise(Horg_td_test, CSI_SNR_dB);
+end
+%%
+% Evaluate mismatch rate + NMSE
+[res_td_before, nmse_td_before] = batch_eval_rate_from_psvd_timedomain( ...
+    permute(Hf_B(idxB_test,:,:,:), [2 3 4 1]), ...   % HorgSet [Nt, Nr, Nsub, Ntest]
+    H_td_test, ...
+    Hf_hat_before, ...
+    Ptot, N0, Ntap_td, ...
+    struct('use_pinv', true, 'reg_epsilon', 0, 'verbose', true));
+
+save_checkpoint_bundle('psvd_td_mismatch_result', dataDir, ...
+    'res_td_before', res_td_before, ...
+    'nmse_td_before', nmse_td_before);
+
+% ---------------------------------------------------------
+% 8.3) Oracle matched reference in time domain
+% ---------------------------------------------------------
+% Oracle here means perfect reconstructed CSI = true truncated time-domain CSI
+Ht_true_test = freq_to_truncated_time_csi(Hf_B(idxB_test,:,:,:), Ntap_td);
+Hf_oracle_td = truncated_time_to_freq_csi(Ht_true_test, Nsub);
+
+[res_td_oracle, nmse_td_oracle] = batch_eval_rate_from_psvd_timedomain( ...
+    permute(Hf_B(idxB_test,:,:,:), [2 3 4 1]), ...
+    H_td_test, ...
+    Hf_oracle_td, ...
+    Ptot, N0, Ntap_td, ...
+    struct('use_pinv', true, 'reg_epsilon', 0, 'verbose', true));
+
+save_checkpoint_bundle('psvd_td_oracle_result', dataDir, ...
+    'res_td_oracle', res_td_oracle, ...
+    'nmse_td_oracle', nmse_td_oracle);
+
+% ---------------------------------------------------------
+% 8.4) Sweep target-adapted time-domain PSVD
+% ---------------------------------------------------------
+R_td_after = zeros(1, nCases);
+nmse_td_after = zeros(1, nCases);
+
+VsTdTgtCell = cell(1, nCases);
+infoTdTgtCell = cell(1, nCases);
+
+for i = 1:nCases
+    Nfield = fieldList(i);
+    fprintf('\n--- Native time-domain PSVD: Nfield = %d ---\n', Nfield);
+
+    XB_td_fieldN = XB_td_fieldPool(1:Nfield, :);
+
+    [Vs_td_tgt, sigma_td_tgt, V_td_tgt, info_td_tgt] = ...
+        psvd_codebook(XB_td_fieldN, compressRate_td, rho0_td, Tpsvd_td);
+
+    save_checkpoint_bundle(sprintf('psvd_td_target_Nfield_%d', Nfield), dataDir, ...
+        'Vs_td_tgt', Vs_td_tgt, ...
+        'sigma_td_tgt', sigma_td_tgt, ...
+        'V_td_tgt', V_td_tgt, ...
+        'info_td_tgt', info_td_tgt, ...
+        'Nfield', Nfield);
+
+    Xhat_td_after = psvd_reconstruct_row_features(XB_td_test, Vs_td_tgt, true);
+    Ht_hat_after = feature_matrix_to_td_csi(Xhat_td_after, Nt, size(HorgSet,2), Ntap_td);
+    Hf_hat_after = truncated_time_to_freq_csi(Ht_hat_after, Nsub);
+
+    save_checkpoint_bundle(sprintf('psvd_td_recon_Nfield_%d', Nfield), dataDir, ...
+        'Xhat_td_after', Xhat_td_after, ...
+        'Ht_hat_after', Ht_hat_after, ...
+        'Hf_hat_after', Hf_hat_after, ...
+        'Nfield', Nfield);
+
+    [res_td_after, nmse_td_val] = batch_eval_rate_from_psvd_timedomain( ...
+        permute(Hf_B(idxB_test,:,:,:), [2 3 4 1]), ...
+        H_td_test, ...
+        Hf_hat_after, ...
+        Ptot, N0, Ntap_td, ...
+        struct('use_pinv', true, 'reg_epsilon', 0, 'verbose', true));
+
+    save_checkpoint_bundle(sprintf('psvd_td_result_Nfield_%d', Nfield), dataDir, ...
+        'res_td_after', res_td_after, ...
+        'nmse_td_val', nmse_td_val, ...
+        'Nfield', Nfield);
+
+    R_td_after(i) = res_td_after.R_mean;
+    nmse_td_after(i) = nmse_td_val;
+
+    VsTdTgtCell{i} = Vs_td_tgt;
+    infoTdTgtCell{i} = info_td_tgt;
+
+    fprintf('Nfield=%d | TD-PSVD adapted R=%.6f, NMSE=%.6f dB\n', ...
+        Nfield, R_td_after(i), nmse_td_after(i));
+end
+
+% ---------------------------------------------------------
+% 8.5) Plot native time-domain PSVD curves
+% ---------------------------------------------------------
+figure;
+hold on;
+plot(fieldList, R_td_after, '-d', 'LineWidth', 1.5, 'DisplayName','TD-PSVD adapted');
+yline(res_td_before.R_mean, '--', 'DisplayName','TD-PSVD mismatch');
+yline(res_td_oracle.R_mean, ':', 'DisplayName','TD-PSVD oracle');
+xlabel('Number of fresh target samples');
+ylabel('Average spectral efficiency (bps/Hz)');
+title('Native time-domain PSVD recovery curve');
+legend('Location','best');
+grid on;
+hold off;
+
+figure;
+hold on;
+plot(fieldList, nmse_td_after, '-d', 'LineWidth', 1.5, 'DisplayName','TD-PSVD adapted');
+yline(nmse_td_before, '--', 'DisplayName','TD-PSVD mismatch');
+yline(nmse_td_oracle, ':', 'DisplayName','TD-PSVD oracle');
+xlabel('Number of fresh target samples');
+ylabel('Average NMSE (dB)');
+title('Native time-domain PSVD NMSE curve');
+legend('Location','best');
+grid on;
+hold off;
+
+% Save into sweepResult if it already exists
+if exist('sweepResult', 'var')
+    sweepResult.timedomain_psvd = struct();
+    sweepResult.timedomain_psvd.Ntap = Ntap_td;
+    sweepResult.timedomain_psvd.compressRate = compressRate_td;
+    sweepResult.timedomain_psvd.rho0 = rho0_td;
+    sweepResult.timedomain_psvd.Tpsvd = Tpsvd_td;
+    sweepResult.timedomain_psvd.R_before = res_td_before.R_mean;
+    sweepResult.timedomain_psvd.R_oracle = res_td_oracle.R_mean;
+    sweepResult.timedomain_psvd.R_after = R_td_after;
+    sweepResult.timedomain_psvd.nmse_before = nmse_td_before;
+    sweepResult.timedomain_psvd.nmse_oracle = nmse_td_oracle;
+    sweepResult.timedomain_psvd.nmse_after = nmse_td_after;
+    sweepResult.timedomain_psvd.Vs_tgt = VsTdTgtCell;
+    sweepResult.timedomain_psvd.info_tgt = infoTdTgtCell;
+
+    save_checkpoint_var('sweepResult', sweepResult, dataDir);
+end
+
+
+%%
+R_perf_each = zeros(1, size(HorgSet,4));
+
+for n = 1:size(HorgSet,4)
+    Horg_n = HorgSet(:,:,:,n);
+    R_perf_each(n) = su_mimo_ofdm_rate_imperfect( ...
+        Horg_n, Horg_n, Horg_n, 1, Ptot, N0, ...
+        struct('use_pinv', true, 'reg_epsilon', 0, 'return_cells', false));
+end
+
+R_perf_mean = mean(R_perf_each);
+
+Yhat_oracle = XB_test;
+
+res_oracle_perf = batch_eval_rate_from_ddanet_outputs( ...
+    HorgSet, HorgSet, Yhat_oracle, Ptot, N0, rateOpts);
+
+
+
 % end

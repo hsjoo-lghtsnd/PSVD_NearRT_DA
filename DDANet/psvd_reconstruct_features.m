@@ -27,4 +27,5 @@ function Yhat = psvd_reconstruct_features(X, Vs, use_pinv)
 
     Xhat_row = Z * Vdag;         % [Nsamples, Nfeat]
     Yhat = Xhat_row.';           % [Nfeat, Nsamples]
+    Yhat = real(Yhat);
 end

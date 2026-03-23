@@ -33,10 +33,17 @@ function [R, gamma, Psubband, Pcell, Wcell] = ...
         Nsband (1,1) {mustBeInteger, mustBePositive}
         Ptot (1,1) double {mustBePositive}
         N0 (1,1) double {mustBePositive}
-        opts.subband_map
-        opts.use_pinv (1,1) logical = true
-        opts.reg_epsilon (1,1) double {mustBeNonnegative} = 0
-        opts.return_cells (1,1) logical = false
+        opts struct
+    end
+
+    if (~isfield(opts, 'use_pinv')) 
+        opts.use_pinv=true;
+    end
+    if (~isfield(opts, 'reg_epsilon')) 
+        opts.reg_epsilon = 0;
+    end
+    if (~isfield(opts, 'return_cells'))
+        opts.return_cells = false; 
     end
 
     % Recover Vhat_stack: [Nt, Nsband, 1]

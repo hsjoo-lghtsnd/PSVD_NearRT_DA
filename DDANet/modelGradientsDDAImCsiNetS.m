@@ -15,7 +15,8 @@ function [gradEnc, gradDec, stateEnc, stateDec, totalLoss, reconLoss, domainLoss
     [dlYField, stateDec] = forward(decoderNet, dlZFieldQ);
 
     % Reconstruction loss on field samples
-    reconLoss = negativeCosineSimilarityLoss(dlYField, dlXField, config.nTx);
+    reconLoss = negativeCosineSimilarityLossMultiSubband( ...
+        dlYField, dlXField, config.nTx, config.nSubbands);
 
     % Domain loss on codewords: MMD(source latent, field latent)
     domainLoss = mmdRbfLoss(dlZSource, dlZFieldQ, kernelSigma);

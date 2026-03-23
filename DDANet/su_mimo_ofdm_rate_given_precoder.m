@@ -35,11 +35,13 @@ function [R, gamma, Pcell, Wcell] = su_mimo_ofdm_rate_given_precoder(Horg, H, Pg
         Nsym (1,1) {mustBeInteger, mustBePositive}
         Ptot (1,1) double {mustBePositive}
         N0 (1,1) double {mustBePositive}
-        opts.use_pinv (1,1) logical = true
-        opts.reg_epsilon (1,1) double {mustBeNonnegative} = 0
-        opts.return_cells (1,1) logical = false
-        opts.subband_map = []
+        opts struct
     end
+
+    if (~isfield(opts, 'use_pinv')) opts.use_pinv = true; end
+    if (~isfield(opts, 'reg_epsilon')) opts.reg_epsilon = 0; end
+    if (~isfield(opts, 'return_cells')) opts.return_cells = false; end
+    if (~isfield(opts, 'subband_map')) opts.subband_map = []; end
 
     % Dimensions
     [Nt, Nr, Nsub] = size(Horg);

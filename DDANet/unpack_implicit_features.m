@@ -24,6 +24,7 @@ function Vstack = unpack_implicit_features(X, Nt, K, renormalize)
         for k = 1:K
             idx = (k-1)*2*Nt + (1:2*Nt);
             block = X(idx, n);
+            block = real(block);
 
             v = complex(block(1:Nt), block(Nt+1:end));
 

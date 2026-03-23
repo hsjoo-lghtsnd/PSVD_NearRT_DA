@@ -1,4 +1,4 @@
-function [Vs, sigmaL, V, info] = psvd_codebook(Htrain, kappa0, rho0, T)
+function [Vs, sigmaL, V, info] = psvd_codebook_real(Htrain, kappa0, rho0, T)
 %PSVD_CODEBOOK Fast sparse codebook construction via PSVD
 %
 % Inputs
@@ -69,8 +69,8 @@ function [Vs, sigmaL, V, info] = psvd_codebook(Htrain, kappa0, rho0, T)
     % ---------------------------
     % Step 4: orthogonal iteration
     % ---------------------------
-    Q = randn(Ntrain, L) + 1j * randn(Ntrain, L);
-    % Q = randn(Ntrain, L);
+    % Q = randn(Ntrain, L) + 1j * randn(Ntrain, L);
+    Q = randn(Ntrain, L);
     [Q, ~] = qr(Q, 0);
 
     for t = 1:T
