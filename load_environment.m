@@ -53,7 +53,6 @@ Nt=32;
 Nr=4;
 maxRetry = 200;
 
-
 % Optional input
 if nargin >= 4 && ~isempty(E_opts)
     if isfield(E_opts, 'delaySpread') && ~isempty(E_opts.delaySpread)
@@ -96,6 +95,7 @@ if E==1
     sampleSize = size(H_bus,1);
     Ht = reshape(H_bus, sampleSize, 100, 1, 100);
 
+    rng(seed);
     idx = randperm(sampleSize, Ntot);
     Ht = Ht(idx,:,:,:);
 
@@ -132,6 +132,7 @@ elseif E==3
     xTest = reshape(HT', maxDelay, nTx, numChannels, sampleSize);
     xTest = permute(xTest, [2, 1, 3, 4]); % permute xTrain to nTx-by-maxDelay-by-numChannels-by-batchSize
 
+    rng(seed);
     idx = randperm(sampleSize, Ntot);
     
     xt = permute(xTest(:,:,:,idx), [4, 1, 3, 2])-0.5; % inverse permutation of [2,1,3,4]
@@ -168,6 +169,7 @@ elseif E==5
     xTest = reshape(HT', maxDelay, nTx, numChannels, sampleSize);
     xTest = permute(xTest, [2, 1, 3, 4]); % permute xTrain to nTx-by-maxDelay-by-numChannels-by-batchSize
 
+    rng(seed);
     idx = randperm(sampleSize, Ntot);
     
     xt = permute(xTest(:,:,:,idx), [4, 1, 3, 2])-0.5; % inverse permutation of [2,1,3,4]
